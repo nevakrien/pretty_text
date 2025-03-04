@@ -6,6 +6,8 @@
 
 #include <QTextEdit>
 #include <QFile>
+#include <QDir>
+
 #include <QTextStream>
 
 #include <QOpenGLWidget>
@@ -25,23 +27,32 @@ class CustomTextEdit : public QTextEdit {
 public:
     explicit CustomTextEdit(QWidget *parent = nullptr)
         : QTextEdit(parent),
-          defaultFontSize(font().pointSizeF()),
+          defaultFontSize(25.0f),  // Increased default font size
           fileName("fun_edit.txt")
     {
+        QFont f = font();
+        f.setPointSizeF(defaultFontSize);
+        setFont(f);
+
         QString defaultText = "Welcome to the custom text editor!\n"
                               "Use Ctrl + Scroll to Zoom In/Out.\n"
                               "Press Ctrl + S to save.\n"
                               "Feel free to type and scroll around.\n"
                               "An OpenGL overlay will highlight lines & the cursor.";
-        
-        QFile file(fileName);
+
+        // Define the file path relative to the application directory
+        QString filePath = QCoreApplication::applicationDirPath() + QDir::separator() + fileName;
+
+        QFile file(filePath);
         if (file.exists()) {
             if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
                 QTextStream in(&file);
                 setPlainText(in.readAll());
                 file.close();
+                qDebug() << "Loaded text from" << filePath;
             } else {
                 setPlainText(defaultText);
+                qWarning() << "Failed to open file for reading:" << filePath;
             }
         } else {
             setPlainText(defaultText);
@@ -49,13 +60,16 @@ public:
                 QTextStream out(&file);
                 out << defaultText;
                 file.close();
+                qDebug() << "Created new file with default text:" << filePath;
+            } else {
+                qWarning() << "Failed to create file:" << filePath;
             }
         }
     }
 
     // Returns the current zoom factor relative to the default font size.
     float zoomFactor() const {
-        return font().pointSizeF() / defaultFontSize;
+        return font().pointSizeF();
     }
 
 protected:
@@ -70,16 +84,7 @@ protected:
 
     void keyPressEvent(QKeyEvent *event) override {
         if ((event->modifiers() & Qt::ControlModifier) && event->key() == Qt::Key_S) {
-            // Save the current text buffer to file.
-            QFile file(fileName);
-            if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-                qDebug() << "Failed to open" << fileName << "for writing.";
-            } else {
-                QTextStream out(&file);
-                out << toPlainText();
-                file.close();
-                qDebug() << "Text saved to" << fileName;
-            }
+            saveToFile();
             event->accept();
         } else {
             QTextEdit::keyPressEvent(event);
@@ -104,7 +109,21 @@ private:
             setFont(f);
         }
     }
+
+    void saveToFile() {
+        QString filePath = QCoreApplication::applicationDirPath() + QDir::separator() + fileName;
+        QFile file(filePath);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&file);
+            out << toPlainText();
+            file.close();
+            qDebug() << "Text saved to" << filePath;
+        } else {
+            qWarning() << "Failed to save file:" << filePath;
+        }
+    }
 };
+
 
 // -------------------- Helper Render Classes (Plain C++ Classes) --------------------
 
@@ -147,8 +166,9 @@ public:
         QPoint center = cRect.center();
         float x = 2.0f * center.x() / float(widgetWidth) - 1.0f;
         float y = 1.0f - 2.0f * center.y() / float(widgetHeight);
+        float scale = 0.13*textEdit->zoomFactor();
         shaderProgram.setUniformValue("u_offset", QVector2D(x, y));
-        shaderProgram.setUniformValue("u_scale", textEdit->zoomFactor());
+        shaderProgram.setUniformValue("u_scale", scale);
 
         float verts[] = {
             -0.02f, -0.02f,
