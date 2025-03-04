@@ -29,7 +29,7 @@ public:
                      "An OpenGL overlay will highlight lines & the cursor.");
     }
 
-    // Return the current zoom factor relative to the default font size.
+    // Returns the current zoom factor relative to the default font size.
     float zoomFactor() const {
         return font().pointSizeF() / defaultFontSize;
     }
@@ -55,13 +55,11 @@ protected:
 
 private:
     float defaultFontSize;
-
     void zoomInFont() {
         QFont f = font();
         f.setPointSizeF(f.pointSizeF() + 1);
         setFont(f);
     }
-
     void zoomOutFont() {
         QFont f = font();
         float sz = f.pointSizeF();
@@ -92,7 +90,6 @@ public:
                 gl_Position = vec4(pos + u_offset, 0.0, 1.0);
             }
         )";
-
         static const char *fragmentCursor = R"(
             #version 330 core
             out vec4 fragColor;
@@ -100,24 +97,21 @@ public:
                 fragColor = vec4(1.0, 0.0, 0.0, 0.5);
             }
         )";
-
         shaderProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, vertexCursor);
         shaderProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentCursor);
         shaderProgram.link();
     }
-
     // f: pointer to current QOpenGLFunctions
     void draw(float time, const CustomTextEdit *textEdit, int widgetWidth, int widgetHeight, QOpenGLFunctions *f) {
         shaderProgram.bind();
         shaderProgram.setUniformValue("u_time", time);
 
-        // Use center of the cursor rectangle
+        // Compute center of the cursor rectangle.
         QRect cRect = textEdit->cursorRect();
         QPoint center = cRect.center();
         float x = 2.0f * center.x() / float(widgetWidth) - 1.0f;
         float y = 1.0f - 2.0f * center.y() / float(widgetHeight);
         shaderProgram.setUniformValue("u_offset", QVector2D(x, y));
-
         shaderProgram.setUniformValue("u_scale", textEdit->zoomFactor());
 
         float verts[] = {
@@ -130,7 +124,6 @@ public:
         f->glDrawArrays(GL_TRIANGLES, 0, 3);
         shaderProgram.release();
     }
-
 private:
     QOpenGLShaderProgram shaderProgram;
 };
@@ -139,17 +132,22 @@ private:
 class LineRenderer {
 public:
     void initialize() {
+        // Vertex shader now passes through vertex positions.
         static const char *vertexLine = R"(
             #version 330 core
             layout(location = 0) in vec2 position;
             uniform float u_time;
             uniform vec2  u_offset;
+            out float v_y;
             void main() {
-                float wave = sin(u_time * 2.0 + position.x) * 0.03;
+                v_y = position.y;
+                float wave = 0.0;
+                // Apply wave only for the top half
+                if (position.y > 0.0)
+                    wave = sin(u_time * 2.0 + position.x) * 0.03;
                 gl_Position = vec4(position.x, position.y + wave + u_offset.y, 0.0, 1.0);
             }
         )";
-
         static const char *fragmentLine = R"(
             #version 330 core
             out vec4 fragColor;
@@ -168,30 +166,38 @@ public:
                 fragColor = vec4(color, 0.3);
             }
         )";
-
         shaderProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, vertexLine);
         shaderProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentLine);
         shaderProgram.link();
     }
-
     // f: pointer to current QOpenGLFunctions
-    void draw(float time, float lineIndex, float offsetY, int widgetHeight, QOpenGLFunctions *f) {
+    // Now draws a rectangle covering the line based on its actual height.
+    void draw(float time, float lineIndex, const QRectF &lineRect, int widgetHeight, QOpenGLFunctions *f) {
         shaderProgram.bind();
         shaderProgram.setUniformValue("u_time", time);
         shaderProgram.setUniformValue("u_lineIndex", lineIndex);
-        shaderProgram.setUniformValue("u_offset", QVector2D(0.0f, offsetY));
+        
+        // Compute the center of the line in NDC:
+        float centerY = 1.0f - 2.0f * ((lineRect.top() + lineRect.height()/2.0f) / float(widgetHeight));
+        // Compute line height in NDC:
+        float lineHeightNDC = 2.0f * (lineRect.height() / float(widgetHeight));
+        float halfLine = lineHeightNDC / 2.0f;
+        
+        // Use u_offset to specify the center of the line highlight.
+        shaderProgram.setUniformValue("u_offset", QVector2D(0.0f, centerY));
 
+        // Create vertices for a rectangle covering the line.
         float verts[] = {
-            -1.0f, -0.02f,
-             1.0f, -0.02f,
-             0.0f,  0.02f
+            -1.0f, -halfLine,
+             1.0f, -halfLine,
+            -1.0f,  halfLine,
+             1.0f,  halfLine
         };
         f->glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, verts);
         f->glEnableVertexAttribArray(0);
-        f->glDrawArrays(GL_TRIANGLES, 0, 3);
+        f->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         shaderProgram.release();
     }
-
 private:
     QOpenGLShaderProgram shaderProgram;
 };
@@ -214,36 +220,30 @@ protected:
         cursorRenderer.initialize();
         lineRenderer.initialize();
     }
-
     void resizeGL(int w, int h) override {
         glViewport(0, 0, w, h);
     }
-
     void paintGL() override {
         glClearColor(0,0,0,0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (!textEdit) return;
 
-        // Draw line highlights.
+        // Draw line highlights
         QTextBlock block = textEdit->document()->firstBlock();
         float lineIndex = 0.0f;
         while (block.isValid()) {
             QRectF lineRect = textEdit->document()->documentLayout()->blockBoundingRect(block);
-            float y = -2.0f * lineRect.top() / float(height()) + 1.0f;
-            lineRenderer.draw(time, lineIndex, y, height(), this);
+            lineRenderer.draw(time, lineIndex, lineRect, height(), this);
             lineIndex += 1.0f;
             block = block.next();
         }
-
-        // Draw the cursor highlight.
+        // Draw the cursor highlight
         cursorRenderer.draw(time, textEdit, width(), height(), this);
     }
-
     void timerEvent(QTimerEvent *) override {
         time += 0.016f;
         update();
     }
-
 private:
     CustomTextEdit *textEdit = nullptr;
     CursorRenderer  cursorRenderer;
@@ -274,7 +274,6 @@ public:
 
         container->installEventFilter(this);
     }
-
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override {
         if (obj == container && e->type() == QEvent::Resize) {
@@ -285,7 +284,6 @@ protected:
         }
         return QWidget::eventFilter(obj, e);
     }
-
 private:
     QWidget        *container = nullptr;
     CustomTextEdit *textEdit  = nullptr;
@@ -300,21 +298,17 @@ int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
 
     MyWindow window;
-
     QScreen *screen = QGuiApplication::primaryScreen();
     QRect screenGeometry = screen->geometry();
     int screenWidth = screenGeometry.width();
     int screenHeight = screenGeometry.height();
-
     int windowSize = std::min(screenWidth, screenHeight) / 2;
     window.resize(windowSize, windowSize);
-
     int xPos = (screenWidth - windowSize) / 2;
     int yPos = (screenHeight - windowSize) / 2;
     window.move(xPos, yPos);
-
     window.setMinimumSize(300, 300);
-    window.setWindowTitle("Text Editor + Overlay (Modular Helpers)");
+    window.setWindowTitle("Text Editor + Overlay (Modular Helpers, Fixed Lines)");
     window.show();
 
     return app.exec();
