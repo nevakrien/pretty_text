@@ -2,43 +2,156 @@
 #include <QMainWindow>
 #include <QPainter>
 #include <QScreen>
+#include <QOpenGLWidget>
+#include <QOpenGLShaderProgram>
+#include <QOpenGLBuffer>
+#include <QOpenGLVertexArrayObject>
+#include <QOpenGLFunctions>
+#include <QVBoxLayout>
+#include <QGridLayout>
+#include <QLabel>
+#include <QTimer>
+#include <QStackedWidget>
 
-class MyWindow : public QMainWindow {
+// Handles the red square drawing
+class SquareWidget : public QWidget {
 public:
-    MyWindow(QWidget *parent = nullptr) : QMainWindow(parent) {}
+    SquareWidget(QWidget *parent = nullptr) : QWidget(parent) {
+        setAttribute(Qt::WA_TranslucentBackground);
+    }
 
 protected:
     void paintEvent(QPaintEvent *event) override {
         QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
 
-        // Get current window size
-        int winWidth = width();
-        int winHeight = height();
+        // Transparent background
+        painter.fillRect(rect(), Qt::transparent);
 
-        // Set background color
-        painter.fillRect(rect(), Qt::white);
-
-        // Scale factor based on window size
-        float scale = std::min(winWidth, winHeight) / 400.0f;
-
-        // Draw a red rectangle
+        // Draw a red square
+        float scale = std::min(width(), height()) / 200.0f;
         painter.setBrush(Qt::red);
-        painter.drawRect(50 * scale, 50 * scale, 100 * scale, 50 * scale);
+        painter.drawRect(0, 0, 100 * scale, 50 * scale);
+    }
+};
 
-        // Draw a blue circle
-        painter.setBrush(Qt::blue);
-        painter.drawEllipse(200 * scale, 50 * scale, 50 * scale, 50 * scale);
+// Handles OpenGL-based circle drawing with a white background
+class CircleWidget : public QOpenGLWidget, protected QOpenGLFunctions {
+    QOpenGLShaderProgram shaderProgram;
+    QOpenGLBuffer vertexBuffer;
+    QOpenGLVertexArrayObject vao;
 
-        // Draw scaled text
-        QFont font = painter.font();
-        font.setPointSizeF(10 * scale);
-        painter.setFont(font);
-        painter.setPen(Qt::black);
-        painter.drawText(50 * scale, 150 * scale, "Hello, Qt World!");
+public:
+    CircleWidget(QWidget *parent = nullptr) : QOpenGLWidget(parent) {
+        setAttribute(Qt::WA_TranslucentBackground);
+    }
 
-        // Draw a green line
-        painter.setPen(QPen(Qt::green, 2 * scale));
-        painter.drawLine(50 * scale, 200 * scale, 300 * scale, 200 * scale);
+protected:
+    void initializeGL() override {
+        initializeOpenGLFunctions();
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glClearColor(1, 1, 1, 1);  // White background for OpenGL area
+
+        const char *vertexShaderSrc = R"(
+            #version 330 core
+            layout(location = 0) in vec2 aPos;
+            void main() {
+                gl_Position = vec4(aPos, 0.0, 1.0);
+            }
+        )";
+
+        const char *fragmentShaderSrc = R"(
+            #version 330 core
+            out vec4 FragColor;
+
+            uniform vec2 u_resolution;
+            uniform vec2 u_center;
+            uniform float u_radius;
+            uniform vec4 u_color;
+
+            void main() {
+                vec2 uv = gl_FragCoord.xy / u_resolution;
+                vec2 pos = (uv - u_center) * u_resolution;
+
+                float distSquared = dot(pos, pos);
+                float radiusSquared = u_radius * u_radius;
+
+                if (distSquared <= radiusSquared) {
+                    FragColor = u_color;  // Inside the circle
+                } else {
+                    FragColor = vec4(0.0, 0.0, 0.0, 0.0);  // Transparent outside
+                }
+            }
+        )";
+
+        shaderProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, vertexShaderSrc);
+        shaderProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentShaderSrc);
+        shaderProgram.link();
+
+        GLfloat vertices[] = {
+            -1.0f, -1.0f,
+             1.0f, -1.0f,
+            -1.0f,  1.0f,
+             1.0f,  1.0f,
+        };
+
+        vao.create();
+        vao.bind();
+
+        vertexBuffer.create();
+        vertexBuffer.bind();
+        vertexBuffer.allocate(vertices, sizeof(vertices));
+
+        shaderProgram.bind();
+        shaderProgram.enableAttributeArray(0);
+        shaderProgram.setAttributeBuffer(0, GL_FLOAT, 0, 2);
+    }
+
+    void paintGL() override {
+        glClear(GL_COLOR_BUFFER_BIT);  // Clear with white background
+
+        shaderProgram.bind();
+
+        shaderProgram.setUniformValue("u_resolution", QVector2D(width(), height()));
+        shaderProgram.setUniformValue("u_center", QVector2D(0.5f, 0.5f));
+        shaderProgram.setUniformValue("u_radius", 80.0f);
+        shaderProgram.setUniformValue("u_color", QVector4D(0.0f, 0.5f, 1.0f, 1.0f));
+
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+};
+
+// Main window for the application
+class MyWindow : public QMainWindow {
+public:
+    MyWindow(QWidget *parent = nullptr) : QMainWindow(parent) {
+        setWindowTitle("Qt with Reusable Widgets");
+
+        QWidget *centralWidget = new QWidget(this);
+        setCentralWidget(centralWidget);
+
+        QGridLayout *layout = new QGridLayout(centralWidget);
+
+        QLabel *nativeLabel = new QLabel(tr("Red Square"));
+        nativeLabel->setAlignment(Qt::AlignHCenter);
+        QLabel *openGLLabel = new QLabel(tr("OpenGL Circle"));
+        openGLLabel->setAlignment(Qt::AlignHCenter);
+
+        SquareWidget *squareWidget = new SquareWidget(this);
+        CircleWidget *circleWidget = new CircleWidget(this);
+
+        layout->addWidget(circleWidget, 0, 0, 1, 2);  // Spans two columns
+        layout->addWidget(squareWidget, 0, 0);         // Overlaps part of the circle
+
+        layout->addWidget(nativeLabel, 1, 0);
+        layout->addWidget(openGLLabel, 1, 1);
+
+        QTimer *timer = new QTimer(this);
+        connect(timer, &QTimer::timeout, squareWidget, QOverload<>::of(&SquareWidget::update));
+        connect(timer, &QTimer::timeout, circleWidget, QOverload<>::of(&CircleWidget::update));
+        timer->start(50);
     }
 };
 
@@ -47,26 +160,19 @@ int main(int argc, char *argv[]) {
 
     MyWindow window;
 
-    // Get the screen size
     QScreen *screen = QGuiApplication::primaryScreen();
     QRect screenGeometry = screen->geometry();
     int screenWidth = screenGeometry.width();
     int screenHeight = screenGeometry.height();
 
-    // Calculate half size for initial window size
     int windowSize = std::min(screenWidth, screenHeight) / 2;
     window.resize(windowSize, windowSize);
 
-    // Center the window on the screen
     int xPos = (screenWidth - windowSize) / 2;
     int yPos = (screenHeight - windowSize) / 2;
     window.move(xPos, yPos);
 
-    window.setMinimumSize(300, 300);        // Ensure a reasonable minimum size
-    window.setWindowTitle("Qt Hello World");
-
-    // Explicitly set the main window for the application
-    app.setActiveWindow(&window);
+    window.setMinimumSize(300, 300);
 
     window.show();
 
