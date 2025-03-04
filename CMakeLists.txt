@@ -1,18 +1,19 @@
-cmake_minimum_required(VERSION 3.10)
-
+cmake_minimum_required(VERSION 3.5)
 project(QtHelloWorld)
 
-# Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_AUTOMOC ON)
 
-# Find Qt5 libraries
-find_package(Qt5 REQUIRED COMPONENTS Widgets)
+find_package(Qt5 COMPONENTS Widgets OpenGL REQUIRED)
+find_package(OpenGL REQUIRED)  # <-- add this
 
-# Include the src directory
-include_directories(${CMAKE_SOURCE_DIR}/src)
+add_executable(QtHelloWorld
+    src/main.cpp
+)
 
-# Add executable
-add_executable(QtHelloWorld src/main.cpp)
-
-# Link Qt libraries
-target_link_libraries(QtHelloWorld Qt5::Widgets)
+# Link to Qt libraries + system OpenGL
+target_link_libraries(QtHelloWorld
+    Qt5::Widgets
+    Qt5::OpenGL
+    GL
+)
