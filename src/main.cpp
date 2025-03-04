@@ -7,11 +7,10 @@
 #include <QOpenGLBuffer>
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLFunctions>
-#include <QVBoxLayout>
 #include <QGridLayout>
 #include <QLabel>
 #include <QTimer>
-#include <QStackedWidget>
+#include <math.h>
 
 // Handles the red square drawing
 class SquareWidget : public QWidget {
@@ -24,18 +23,23 @@ protected:
     void paintEvent(QPaintEvent *event) override {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
-
-        // Transparent background
         painter.fillRect(rect(), Qt::transparent);
 
-        // Draw a red square
-        float scale = std::min(width(), height()) / 200.0f;
+        float w = width();
+        float h = height();
+
+        float scale = std::min(w, h) ;
+
+        // Define a base size and scale proportionally
+        float rectWidth = scale*0.6;
+        float rectHeight = scale*0.4f;
+
         painter.setBrush(Qt::red);
-        painter.drawRect(0, 0, 100 * scale, 50 * scale);
+        painter.drawRect(10, 10, int(rectWidth), int(rectHeight ));
     }
 };
 
-// Handles OpenGL-based circle drawing with a white background
+// Handles OpenGL-based circle drawing
 class CircleWidget : public QOpenGLWidget, protected QOpenGLFunctions {
     QOpenGLShaderProgram shaderProgram;
     QOpenGLBuffer vertexBuffer;
@@ -52,7 +56,7 @@ protected:
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glClearColor(1, 1, 1, 1);  // White background for OpenGL area
+        glClearColor(1, 0.8, 0.8, 1);  // White background
 
         const char *vertexShaderSrc = R"(
             #version 330 core
@@ -65,20 +69,15 @@ protected:
         const char *fragmentShaderSrc = R"(
             #version 330 core
             out vec4 FragColor;
-
             uniform vec2 u_resolution;
             uniform vec2 u_center;
             uniform float u_radius;
             uniform vec4 u_color;
 
             void main() {
-                vec2 uv = gl_FragCoord.xy / u_resolution;
-                vec2 pos = (uv - u_center) * u_resolution;
-
-                float distSquared = dot(pos, pos);
-                float radiusSquared = u_radius * u_radius;
-
-                if (distSquared <= radiusSquared) {
+                vec2 pos = gl_FragCoord.xy - u_center;
+                float dist2 = dot(pos, pos);
+                if (dist2 <= u_radius * u_radius) {
                     FragColor = u_color;  // Inside the circle
                 } else {
                     FragColor = vec4(0.0, 0.0, 0.0, 0.0);  // Transparent outside
@@ -110,13 +109,19 @@ protected:
     }
 
     void paintGL() override {
-        glClear(GL_COLOR_BUFFER_BIT);  // Clear with white background
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        float w = float(width());
+        float h = float(height());
+        float radius = std::min(w, h) * 0.25f;
+
+        float centerX = w * 0.5f;
+        float centerY = h * 0.5f;
 
         shaderProgram.bind();
-
-        shaderProgram.setUniformValue("u_resolution", QVector2D(width(), height()));
-        shaderProgram.setUniformValue("u_center", QVector2D(0.5f, 0.5f));
-        shaderProgram.setUniformValue("u_radius", 80.0f);
+        shaderProgram.setUniformValue("u_resolution", QVector2D(w, h));
+        shaderProgram.setUniformValue("u_center", QVector2D(centerX, centerY));
+        shaderProgram.setUniformValue("u_radius", radius);
         shaderProgram.setUniformValue("u_color", QVector4D(0.0f, 0.5f, 1.0f, 1.0f));
 
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -142,8 +147,9 @@ public:
         SquareWidget *squareWidget = new SquareWidget(this);
         CircleWidget *circleWidget = new CircleWidget(this);
 
-        layout->addWidget(circleWidget, 0, 0, 1, 2);  // Spans two columns
-        layout->addWidget(squareWidget, 0, 0);         // Overlaps part of the circle
+        // Arrange the layout with slight overlap
+        layout->addWidget(circleWidget, 0, 0, 1, 2);
+        layout->addWidget(squareWidget, 0, 0); // Overlaps part of the circle
 
         layout->addWidget(nativeLabel, 1, 0);
         layout->addWidget(openGLLabel, 1, 1);
@@ -173,8 +179,8 @@ int main(int argc, char *argv[]) {
     window.move(xPos, yPos);
 
     window.setMinimumSize(300, 300);
-
     window.show();
 
     return app.exec();
 }
+    
