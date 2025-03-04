@@ -1,186 +1,110 @@
 #include <QApplication>
-#include <QMainWindow>
-#include <QPainter>
 #include <QScreen>
-#include <QOpenGLWidget>
-#include <QOpenGLShaderProgram>
-#include <QOpenGLBuffer>
-#include <QOpenGLVertexArrayObject>
-#include <QOpenGLFunctions>
-#include <QGridLayout>
-#include <QLabel>
-#include <QTimer>
-#include <math.h>
+#include <QRect>
+#include <QVBoxLayout>
+#include <QWidget>
+#include <QTextEdit>
+#include <QString>
+#include <QWheelEvent>  // Required for QWheelEvent
+#include <QKeyEvent>    // Required for keyPressEvent
+#include <QDebug>       // For debug printing
 
-// Handles the red square drawing
-class SquareWidget : public QWidget {
+// CustomTextEdit class to handle custom scroll, zoom, and Ctrl+S behavior
+class CustomTextEdit : public QTextEdit {
 public:
-    SquareWidget(QWidget *parent = nullptr) : QWidget(parent) {
-        setAttribute(Qt::WA_TranslucentBackground);
+    CustomTextEdit(QWidget *parent = nullptr) : QTextEdit(parent), defaultFontSize(fontPointSize()) {
+        setPlainText("Welcome to the custom text editor!\n"
+                     "Use Ctrl + Scroll to Zoom In/Out.\n"
+                     "Use Alt + Scroll for regular scrolling.\n"
+                     "Press Ctrl + S to save (not implemented yet).\n"
+                     "Feel free to type and scroll around.");
     }
 
 protected:
-    void paintEvent(QPaintEvent *event) override {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.fillRect(rect(), Qt::transparent);
-
-        float w = width();
-        float h = height();
-
-        float scale = std::min(w, h) ;
-
-        // Define a base size and scale proportionally
-        float rectWidth = scale*0.6;
-        float rectHeight = scale*0.4f;
-
-        painter.setBrush(Qt::red);
-        painter.drawRect(10, 10, int(rectWidth), int(rectHeight ));
-    }
-};
-
-// Handles OpenGL-based circle drawing
-class CircleWidget : public QOpenGLWidget, protected QOpenGLFunctions {
-    QOpenGLShaderProgram shaderProgram;
-    QOpenGLBuffer vertexBuffer;
-    QOpenGLVertexArrayObject vao;
-
-public:
-    CircleWidget(QWidget *parent = nullptr) : QOpenGLWidget(parent) {
-        setAttribute(Qt::WA_TranslucentBackground);
-    }
-
-protected:
-    void initializeGL() override {
-        initializeOpenGLFunctions();
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glClearColor(1, 0.8, 0.8, 1);  // White background
-
-        const char *vertexShaderSrc = R"(
-            #version 330 core
-            layout(location = 0) in vec2 aPos;
-            void main() {
-                gl_Position = vec4(aPos, 0.0, 1.0);
+    // Handle mouse wheel events for scroll and zoom
+    void wheelEvent(QWheelEvent *event) override {
+        // Handle Ctrl + Scroll for Zoom
+        if (event->modifiers() & Qt::ControlModifier) {
+            int delta = event->angleDelta().y();
+            if (delta > 0) {
+                zoomIn();  // Zoom In
+            } else if (delta < 0) {
+                zoomOut();  // Zoom Out
             }
-        )";
-
-        const char *fragmentShaderSrc = R"(
-            #version 330 core
-            out vec4 FragColor;
-            uniform vec2 u_resolution;
-            uniform vec2 u_center;
-            uniform float u_radius;
-            uniform vec4 u_color;
-
-            void main() {
-                vec2 pos = gl_FragCoord.xy - u_center;
-                float dist2 = dot(pos, pos);
-                if (dist2 <= u_radius * u_radius) {
-                    FragColor = u_color;  // Inside the circle
-                } else {
-                    FragColor = vec4(0.0, 0.0, 0.0, 0.0);  // Transparent outside
-                }
-            }
-        )";
-
-        shaderProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, vertexShaderSrc);
-        shaderProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentShaderSrc);
-        shaderProgram.link();
-
-        GLfloat vertices[] = {
-            -1.0f, -1.0f,
-             1.0f, -1.0f,
-            -1.0f,  1.0f,
-             1.0f,  1.0f,
-        };
-
-        vao.create();
-        vao.bind();
-
-        vertexBuffer.create();
-        vertexBuffer.bind();
-        vertexBuffer.allocate(vertices, sizeof(vertices));
-
-        shaderProgram.bind();
-        shaderProgram.enableAttributeArray(0);
-        shaderProgram.setAttributeBuffer(0, GL_FLOAT, 0, 2);
+        }
+        else {
+            QTextEdit::wheelEvent(event);
+        }
     }
 
-    void paintGL() override {
-        glClear(GL_COLOR_BUFFER_BIT);
+    // Handle key press events for shortcuts like Ctrl + S
+    void keyPressEvent(QKeyEvent *event) override {
+        if (event->modifiers() & Qt::ControlModifier && event->key() == Qt::Key_S) {
+            qDebug() << "Ctrl + S pressed! (Save not implemented yet)";
+            event->accept();  // Mark event as handled
+        } else {
+            QTextEdit::keyPressEvent(event);  // Default handling for other keys
+        }
+    }
 
-        float w = float(width());
-        float h = float(height());
-        float radius = std::min(w, h) * 0.25f;
+private:
+    int defaultFontSize;  // Store the default font size
 
-        float centerX = w * 0.5f;
-        float centerY = h * 0.5f;
+    // Zoom In by increasing the font size
+    void zoomIn() {
+        QFont font = this->font();
+        int currentSize = font.pointSize();
+        font.setPointSize(currentSize + 1);  // Increase font size
+        setFont(font);
+    }
 
-        shaderProgram.bind();
-        shaderProgram.setUniformValue("u_resolution", QVector2D(w, h));
-        shaderProgram.setUniformValue("u_center", QVector2D(centerX, centerY));
-        shaderProgram.setUniformValue("u_radius", radius);
-        shaderProgram.setUniformValue("u_color", QVector4D(0.0f, 0.5f, 1.0f, 1.0f));
-
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    // Zoom Out by decreasing the font size
+    void zoomOut() {
+        QFont font = this->font();
+        int currentSize = font.pointSize();
+        if (currentSize > 1) {  // Prevent font size from becoming zero or negative
+            font.setPointSize(currentSize - 1);  // Decrease font size
+            setFont(font);
+        }
     }
 };
 
-// Main window for the application
-class MyWindow : public QMainWindow {
+// Main window class to hold the text editor
+class MyWindow : public QWidget {
 public:
-    MyWindow(QWidget *parent = nullptr) : QMainWindow(parent) {
-        setWindowTitle("Qt with Reusable Widgets");
-
-        QWidget *centralWidget = new QWidget(this);
-        setCentralWidget(centralWidget);
-
-        QGridLayout *layout = new QGridLayout(centralWidget);
-
-        QLabel *nativeLabel = new QLabel(tr("Red Square"));
-        nativeLabel->setAlignment(Qt::AlignHCenter);
-        QLabel *openGLLabel = new QLabel(tr("OpenGL Circle"));
-        openGLLabel->setAlignment(Qt::AlignHCenter);
-
-        SquareWidget *squareWidget = new SquareWidget(this);
-        CircleWidget *circleWidget = new CircleWidget(this);
-
-        // Arrange the layout with slight overlap
-        layout->addWidget(circleWidget, 0, 0, 1, 2);
-        layout->addWidget(squareWidget, 0, 0); // Overlaps part of the circle
-
-        layout->addWidget(nativeLabel, 1, 0);
-        layout->addWidget(openGLLabel, 1, 1);
-
-        QTimer *timer = new QTimer(this);
-        connect(timer, &QTimer::timeout, squareWidget, QOverload<>::of(&SquareWidget::update));
-        connect(timer, &QTimer::timeout, circleWidget, QOverload<>::of(&CircleWidget::update));
-        timer->start(50);
+    MyWindow(QWidget *parent = nullptr) : QWidget(parent) {
+        QVBoxLayout *layout = new QVBoxLayout(this);
+        CustomTextEdit *textEdit = new CustomTextEdit(this);
+        layout->addWidget(textEdit);
+        setLayout(layout);
     }
 };
 
+// Main function to set up and display the window
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
 
     MyWindow window;
 
+    // Get screen geometry and center the window
     QScreen *screen = QGuiApplication::primaryScreen();
     QRect screenGeometry = screen->geometry();
     int screenWidth = screenGeometry.width();
     int screenHeight = screenGeometry.height();
 
+    // Set window size to half of the smaller screen dimension
     int windowSize = std::min(screenWidth, screenHeight) / 2;
     window.resize(windowSize, windowSize);
 
+    // Center the window on the screen
     int xPos = (screenWidth - windowSize) / 2;
     int yPos = (screenHeight - windowSize) / 2;
     window.move(xPos, yPos);
 
+    // Set minimum size for the window
     window.setMinimumSize(300, 300);
+    window.setWindowTitle("Custom Text Editor with Zoom and Save Shortcut");
     window.show();
 
     return app.exec();
 }
-    
