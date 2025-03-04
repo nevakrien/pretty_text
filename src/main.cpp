@@ -3,7 +3,11 @@
 #include <QRect>
 #include <QVBoxLayout>
 #include <QWidget>
+
 #include <QTextEdit>
+#include <QFile>
+#include <QTextStream>
+
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions>
 #include <QOpenGLShaderProgram>
@@ -16,17 +20,37 @@
 #include <QAbstractTextDocumentLayout>
 #include <cmath>
 
-// -------------------- 1) CustomTextEdit --------------------
+// -------------------- TextEditing --------------------
 class CustomTextEdit : public QTextEdit {
 public:
     explicit CustomTextEdit(QWidget *parent = nullptr)
-        : QTextEdit(parent), defaultFontSize(font().pointSizeF())
+        : QTextEdit(parent),
+          defaultFontSize(font().pointSizeF()),
+          fileName("fun_edit.txt")
     {
-        setPlainText("Welcome to the custom text editor!\n"
-                     "Use Ctrl + Scroll to Zoom In/Out.\n"
-                     "Press Ctrl + S to save (not implemented yet).\n"
-                     "Feel free to type and scroll around.\n"
-                     "An OpenGL overlay will highlight lines & the cursor.");
+        QString defaultText = "Welcome to the custom text editor!\n"
+                              "Use Ctrl + Scroll to Zoom In/Out.\n"
+                              "Press Ctrl + S to save.\n"
+                              "Feel free to type and scroll around.\n"
+                              "An OpenGL overlay will highlight lines & the cursor.";
+        
+        QFile file(fileName);
+        if (file.exists()) {
+            if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                QTextStream in(&file);
+                setPlainText(in.readAll());
+                file.close();
+            } else {
+                setPlainText(defaultText);
+            }
+        } else {
+            setPlainText(defaultText);
+            if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                QTextStream out(&file);
+                out << defaultText;
+                file.close();
+            }
+        }
     }
 
     // Returns the current zoom factor relative to the default font size.
@@ -46,7 +70,16 @@ protected:
 
     void keyPressEvent(QKeyEvent *event) override {
         if ((event->modifiers() & Qt::ControlModifier) && event->key() == Qt::Key_S) {
-            qDebug() << "Ctrl + S pressed! (Save not implemented yet)";
+            // Save the current text buffer to file.
+            QFile file(fileName);
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                qDebug() << "Failed to open" << fileName << "for writing.";
+            } else {
+                QTextStream out(&file);
+                out << toPlainText();
+                file.close();
+                qDebug() << "Text saved to" << fileName;
+            }
             event->accept();
         } else {
             QTextEdit::keyPressEvent(event);
@@ -55,11 +88,14 @@ protected:
 
 private:
     float defaultFontSize;
+    QString fileName;
+
     void zoomInFont() {
         QFont f = font();
         f.setPointSizeF(f.pointSizeF() + 1);
         setFont(f);
     }
+
     void zoomOutFont() {
         QFont f = font();
         float sz = f.pointSizeF();
@@ -70,7 +106,7 @@ private:
     }
 };
 
-// -------------------- 2) Helper Classes (Plain C++ Classes) --------------------
+// -------------------- Helper Render Classes (Plain C++ Classes) --------------------
 
 // CursorRenderer: Handles the cursor highlight shader.
 class CursorRenderer {
@@ -143,8 +179,7 @@ public:
                 v_y = position.y;
                 float wave = 0.0;
                 // Apply wave only for the top half
-                if (position.y > 0.0)
-                    wave = sin(u_time * 2.0 + position.x) * 0.03;
+                wave = sin(u_time * 2.0 + position.x+0.01*position.y) * 0.03;
                 gl_Position = vec4(position.x, position.y + wave + u_offset.y, 0.0, 1.0);
             }
         )";
@@ -202,7 +237,7 @@ private:
     QOpenGLShaderProgram shaderProgram;
 };
 
-// -------------------- 3) OverlayWidget --------------------
+// -------------------- QT OpenGL integration --------------------
 class OverlayWidget : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 public:
@@ -251,7 +286,7 @@ private:
     float           time = 0.0f;
 };
 
-// -------------------- 4) MyWindow --------------------
+// -------------------- Main App --------------------
 class MyWindow : public QWidget {
     Q_OBJECT
 public:
